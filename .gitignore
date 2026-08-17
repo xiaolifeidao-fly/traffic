@@ -1,5 +1,6 @@
 .*
 !.gitignore
+!.gitmodules
 !.dockerignore
 !.git/
 config/config.ini

@@ -1,0 +1,12 @@
+[submodule "Kakrolot"]
+	path = Kakrolot
+	url = git@github.com:xiaolifeidao-fly/Kakrolot.git
+[submodule "barry"]
+	path = barry
+	url = git@github.com:xiaolifeidao-fly/barry.git
+[submodule "galactus"]
+	path = galactus
+	url = git@github.com:xiaolifeidao-fly/galactus.git
+[submodule "phoenix"]
+	path = phoenix
+	url = git@github.com:xiaolifeidao-fly/phoenix.git
