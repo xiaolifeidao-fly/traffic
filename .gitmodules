@@ -10,3 +10,6 @@
 [submodule "phoenix"]
 	path = phoenix
 	url = git@github.com:xiaolifeidao-fly/phoenix.git
+[submodule "surfer"]
+	path = surfer
+	url = git@github.com:xiaolifeidao-fly/surfer.git
