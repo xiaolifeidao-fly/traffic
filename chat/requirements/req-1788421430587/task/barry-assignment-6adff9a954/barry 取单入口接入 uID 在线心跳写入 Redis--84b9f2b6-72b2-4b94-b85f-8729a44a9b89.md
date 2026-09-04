@@ -1,0 +1,112 @@
+---
+format: "delivery-task-planner-chat/v1"
+resourceType: "task"
+resourceKey: "barry-assignment-6adff9a954"
+requirementKey: "req-1788421430587"
+resourceName: "barry 取单入口接入 uID 在线心跳写入 Redis"
+conversationTitle: "barry 取单入口接入 uID 在线心跳写入 Redis"
+threadId: "84b9f2b6-72b2-4b94-b85f-8729a44a9b89"
+provider: "claude"
+phase: "development"
+lastTurnStatus: "completed"
+archivedAt: "2026-09-03T08:14:43.055418+00:00"
+---
+
+# 任务聊天 · barry 取单入口接入 uID 在线心跳写入 Redis
+
+## 第 1 轮 · completed · ZlFjLa9v4OrVi9-3mm8MTw
+
+### 用户
+
+执行「动作执行」阶段：barry 取单入口接入 uID 在线心跳写入 Redis
+
+### 助手
+
+I'll start by loading the delivery-action-execution skill and exploring the project structure.
+
+### 助手
+
+Now wire it into `AbsUserOrderService`:
+
+### 助手
+
+Now compile the module:
+
+### 助手
+
+All four controllers route through the two impls. Now the design doc:
+
+### 助手
+
+改动完成并通过编译。
+
+## 改了什么
+
+**新增** `barry/barry-business/barry-order-business/barry-order-business-core/src/main/java/com/barry/business/order/support/UserOnlineHeartbeatCache.java`
+- `@Component`，对外只有 `record(Long userId, String uid)`。
+- `userId` 为空或 `uid` 空白直接返回（用户参数非法场景跳过）。
+- `ZADD barry_online_uid_{userId} <秒级时间戳> <uid>`，随后 `ttl < 0` 时补 `EXPIRE 3600` 兜底；`ZADD barry_online_user <秒级时间戳> <userId>`（不设 TTL，留给查询侧 `ZREMRANGEBYSCORE` 清理）。
+- 整体 try-catch，失败只 `log.warn`，不影响取单。结构与容错写法照抄同目录的 `OrderFetchMonitorCache` 与 `FetchAssignmentMonitorCache.expireIfNeeded`。
+
+**修改** `barry/.../business/order/AbsUserOrderService.java`
+- 第 7 行新增 import，第 50-51 行新增 `@Autowired UserOnlineHeartbeatCache`。
+- 第 149-150 行：`fetchUserOrder` 的 `finally` 首行调用 `userOnlineHeartbeatCache.record(orderRequest.getUserId(), uuid)`，排在既有 `monitorFetchHit/Miss` 之前。
+
+设计过程文档：[doc/barry-assignment/barry-assignment-6adff9a954/design/设计过程-01.md](doc/barry-assignment/barry-assignment-6adff9a954/design/设计过程-01.md)
+
+## 怎么验的
+
+- `mvn -o -pl barry-business/barry-order-business/barry-order-business-core -am -DskipTests compile` → BUILD SUCCESS。
+- `grep "extends AbsUserOrderService"` 确认子类只有 `UserOrderServiceImpl:32`、`UserBatchOrderServiceImpl:20`；`grep "fetchUserOrder"` 确认调用方只有 `TaskController:150` / `OrderController:61` / `BatchTaskController:156` / `FullTaskController:60`，全部经这两个实现，单条与批量取单都被覆盖。
+- 未跑运行期 Redis 验证（需连真实 Redis 与 app 端请求），留给测试阶段。
+
+## 对照验收标准
+
+| 验收条 | 状态 |
+|---|---|
+| 持续取单但始终无任务时 `ZSCORE barry_online_uid_{userId} {uid}` 存在并刷新 | 代码已满足（`finally` 覆盖 miss 分支，ZADD 覆盖 score），待运行期验证 |
+| 前置校验拦截同样写入 | 已满足：`buildPreCheckError` 的 `return` 都在 `try` 内，`finally` 必执行 |
+| `ZSCORE barry_online_user {userId}` 刷新且 `TTL barry_online_uid_{userId}` 为正 | 代码已满足，待运行期验证 |
+| Redis 异常时取单行为不变，仅 warn | 已满足（方法级 try-catch） |
+| 单条与批量取单均生效 | 已满足（两个子类共用抽象类入口） |
+| 不做项（无开关、不改 `OrderFetchMonitorCache`、不写查询统计、不改 Controller/DTO、不给提交/保活埋点） | 均未触碰 |
+
+## 测试交接信息
+
+- 入口：`/task/get`（TaskController）、`/order/*`（OrderController）、批量 `BatchTaskController`、`FullTaskController`（走 `UserBatchOrderService`）。
+- 环境：barry app-client 服务 + 其配置的 Redis，账号需带合法 uID；构造「无任务」场景只需该用户个人池为空。
+- 观察：`ZSCORE barry_online_uid_{userId} {uid}`、`TTL barry_online_uid_{userId}`、`ZSCORE barry_online_user {userId}`；score 为**秒级** Unix 时间戳。
+- 前置校验拦截场景可用「渠道未配置」或「超上限」触发。
+- 清理：`DEL barry_online_uid_{userId}`；`barry_online_user` 单条用 `ZREM barry_online_user {userId}`。
+- 异常演练：停掉 Redis 或指向不可用地址，取单应正常返回业务结果，日志出现 `record user online heartbeat failed`。
+
+## 遗留与风险
+
+- score 单位定为**秒**，是与任务 2（统计侧）的硬契约；若统计侧按毫秒解读会导致在线数恒为 0。
+- 未提交 git（改动留在工作区 `feature/issue_req-1788421398616` 分支的 barry 子模块内，未 push）。
+- 写路径每次取单增加 2 次 ZADD + 1 次 TTL 读（仅 `ttl < 0` 时才多一次 EXPIRE），与既有取单监控同量级。
+- 仓库里另有一套 `BatchTaskController.recordUserUidUsage`（`user:uid:zset:*`，毫秒 score，2 小时 TTL）的独立机制，本次未复用也未改动，排查时注意区分。
+
+## 代码事实交接
+
+1. 新类：`barry/barry-business/barry-order-business/barry-order-business-core/src/main/java/com/barry/business/order/support/UserOnlineHeartbeatCache.java`，`@Component`，唯一公开方法 `public void record(Long userId, String uid)`。
+2. Redis key 契约：`barry_online_uid_{userId}`（ZSET，member = uid）、`barry_online_user`（ZSET，member = userId 的字符串形式）。
+3. **score 单位 = 秒级 Unix 时间戳**（`System.currentTimeMillis() / 1000L`）；统计侧窗口截止值直接用 `now秒 - windowSeconds`，不要乘 1000。
+4. `barry_online_uid_{userId}` 的 TTL 兜底由写入侧负责：`ttl < 0` 时 `EXPIRE 3600`，常量 `ONLINE_UID_EXPIRE_SECONDS = 3600`。
+5. `barry_online_user` **不设 TTL**，须由查询侧 `ZREMRANGEBYSCORE barry_online_user 0 (now - windowSeconds)` 清理；清空后 Redis 自动删 key。
+6. 埋点位置：`AbsUserOrderService.fetchUserOrder` 的 `finally` 首行（`AbsUserOrderService.java:149-150`），在 `monitorFetchHit/monitorFetchMiss` 之前。
+7. `AbsUserOrderService.java:50-51` 新增字段 `@Autowired private UserOnlineHeartbeatCache userOnlineHeartbeatCache;`。
+8. `fetchUserOrder` 的所有前置校验拦截都是 `try` 内 `return buildPreCheckError(...)`，`finally` 必执行——统计口径包含被拦截的 uID。
+9. `uid` 空白或 `userId` 为 null 时不写心跳，`barry_online_uid_*` 里不会出现空 member。
+10. 心跳写入无开关，无配置项；不读任何 `@Value`。
+11. `RedisService`（`barry-plugin/barry-redis/barry-jedis/.../util/RedisService.java`）现有能力：`zadd(String,long,String)`:89、`zRangeByScore`:1115（强制传 offset/count）、`getZCard`:1204、`eval`:1305、`expire(String,int)`:279、`ttl(String)`:289；**仍缺 `zcount`、`zremrangeByScore`、无 offset/count 的 `zRangeByScore` 重载**，任务 2 需自行补齐。
+12. 取单入口子类只有两个：`order/impl/UserOrderServiceImpl.java:32`、`order/impl/UserBatchOrderServiceImpl.java:20`。
+13. 取单调用方四处：`TaskController:150`、`OrderController:61`、`BatchTaskController:156`、`FullTaskController:60`（后者走 `UserBatchOrderService`）。
+14. `OrderFetchMonitorCache` 未改动，其 `barry_order_fetch_{hit,miss}_{user,uid}_*` 计数 key 与心跳 key 相互独立。
+15. 无关的既有机制：`BatchTaskController.recordUserUidUsage`（约 447-490 行）写 `user:uid:zset:{userId}` 与 `active:users:zset:uid:usage`，毫秒 score，与本次 key 无关。
+
+批量判定：完成
+
+<!-- delivery-task-planner-chat-data
+eyJ0dXJucyI6W3siaWQiOiJabEZqTGE5djRPclZpOS0zbW04TVR3Iiwic3RhdHVzIjoiY29tcGxldGVkIiwiY3JlYXRlZEF0IjoiMjAyNi0wOS0wM1QwODoxMTozNS4zOTg4ODArMDA6MDAiLCJjb21wbGV0ZWRBdCI6IjIwMjYtMDktMDNUMDg6MTQ6NDIuOTA2MjMwKzAwOjAwIiwiaXRlbXMiOlt7InR5cGUiOiJ1c2VyTWVzc2FnZSIsImNvbnRlbnQiOlt7InR5cGUiOiJ0ZXh0IiwidGV4dCI6IuaJp+ihjOOAjOWKqOS9nOaJp+ihjOOAjemYtuaute+8mmJhcnJ5IOWPluWNleWFpeWPo+aOpeWFpSB1SUQg5Zyo57q/5b+D6Lez5YaZ5YWlIFJlZGlzIn1dfSx7InR5cGUiOiJhZ2VudE1lc3NhZ2UiLCJ0ZXh0IjoiSSdsbCBzdGFydCBieSBsb2FkaW5nIHRoZSBkZWxpdmVyeS1hY3Rpb24tZXhlY3V0aW9uIHNraWxsIGFuZCBleHBsb3JpbmcgdGhlIHByb2plY3Qgc3RydWN0dXJlLiIsInN0YXR1cyI6ImNvbXBsZXRlZCIsInBoYXNlIjoiIn0seyJ0eXBlIjoiYWdlbnRNZXNzYWdlIiwidGV4dCI6Ik5vdyB3aXJlIGl0IGludG8gYEFic1VzZXJPcmRlclNlcnZpY2VgOiIsInN0YXR1cyI6ImNvbXBsZXRlZCIsInBoYXNlIjoiIn0seyJ0eXBlIjoiYWdlbnRNZXNzYWdlIiwidGV4dCI6Ik5vdyBjb21waWxlIHRoZSBtb2R1bGU6Iiwic3RhdHVzIjoiY29tcGxldGVkIiwicGhhc2UiOiIifSx7InR5cGUiOiJhZ2VudE1lc3NhZ2UiLCJ0ZXh0IjoiQWxsIGZvdXIgY29udHJvbGxlcnMgcm91dGUgdGhyb3VnaCB0aGUgdHdvIGltcGxzLiBOb3cgdGhlIGRlc2lnbiBkb2M6Iiwic3RhdHVzIjoiY29tcGxldGVkIiwicGhhc2UiOiIifSx7InR5cGUiOiJhZ2VudE1lc3NhZ2UiLCJ0ZXh0Ijoi5pS55Yqo5a6M5oiQ5bm26YCa6L+H57yW6K+R44CCXG5cbiMjIOaUueS6huS7gOS5iFxuXG4qKuaWsOWinioqIGBiYXJyeS9iYXJyeS1idXNpbmVzcy9iYXJyeS1vcmRlci1idXNpbmVzcy9iYXJyeS1vcmRlci1idXNpbmVzcy1jb3JlL3NyYy9tYWluL2phdmEvY29tL2JhcnJ5L2J1c2luZXNzL29yZGVyL3N1cHBvcnQvVXNlck9ubGluZUhlYXJ0YmVhdENhY2hlLmphdmFgXG4tIGBAQ29tcG9uZW50YO+8jOWvueWkluWPquaciSBgcmVjb3JkKExvbmcgdXNlcklkLCBTdHJpbmcgdWlkKWDjgIJcbi0gYHVzZXJJZGAg5Li656m65oiWIGB1aWRgIOepuueZveebtOaOpei/lOWbnu+8iOeUqOaIt+WPguaVsOmdnuazleWcuuaZr+i3s+i/h++8ieOAglxuLSBgWkFERCBiYXJyeV9vbmxpbmVfdWlkX3t1c2VySWR9IDznp5Lnuqfml7bpl7TmiLM+IDx1aWQ+YO+8jOmaj+WQjiBgdHRsIDwgMGAg5pe26KGlIGBFWFBJUkUgMzYwMGAg5YWc5bqV77ybYFpBREQgYmFycnlfb25saW5lX3VzZXIgPOenkue6p+aXtumXtOaIsz4gPHVzZXJJZD5g77yI5LiN6K6+IFRUTO+8jOeVmee7meafpeivouS+pyBgWlJFTVJBTkdFQllTQ09SRWAg5riF55CG77yJ44CCXG4tIOaVtOS9kyB0cnktY2F0Y2jvvIzlpLHotKXlj6ogYGxvZy53YXJuYO+8jOS4jeW9seWTjeWPluWNleOAgue7k+aehOS4juWuuemUmeWGmeazleeFp+aKhOWQjOebruW9leeahCBgT3JkZXJGZXRjaE1vbml0b3JDYWNoZWAg5LiOIGBGZXRjaEFzc2lnbm1lbnRNb25pdG9yQ2FjaGUuZXhwaXJlSWZOZWVkZWRg44CCXG5cbioq5L+u5pS5KiogYGJhcnJ5Ly4uLi9idXNpbmVzcy9vcmRlci9BYnNVc2VyT3JkZXJTZXJ2aWNlLmphdmFgXG4tIOesrCA3IOihjOaWsOWiniBpbXBvcnTvvIznrKwgNTAtNTEg6KGM5paw5aKeIGBAQXV0b3dpcmVkIFVzZXJPbmxpbmVIZWFydGJlYXRDYWNoZWDjgIJcbi0g56ysIDE0OS0xNTAg6KGM77yaYGZldGNoVXNlck9yZGVyYCDnmoQgYGZpbmFsbHlgIOmmluihjOiwg+eUqCBgdXNlck9ubGluZUhlYXJ0YmVhdENhY2hlLnJlY29yZChvcmRlclJlcXVlc3QuZ2V0VXNlcklkKCksIHV1aWQpYO+8jOaOkuWcqOaXouaciSBgbW9uaXRvckZldGNoSGl0L01pc3NgIOS5i+WJjeOAglxuXG7orr7orqHov4fnqIvmlofmoaPvvJpbZG9jL2JhcnJ5LWFzc2lnbm1lbnQvYmFycnktYXNzaWdubWVudC02YWRmZjlhOTU0L2Rlc2lnbi/orr7orqHov4fnqIstMDEubWRdKGRvYy9iYXJyeS1hc3NpZ25tZW50L2JhcnJ5LWFzc2lnbm1lbnQtNmFkZmY5YTk1NC9kZXNpZ24v6K6+6K6h6L+H56iLLTAxLm1kKVxuXG4jIyDmgI7kuYjpqoznmoRcblxuLSBgbXZuIC1vIC1wbCBiYXJyeS1idXNpbmVzcy9iYXJyeS1vcmRlci1idXNpbmVzcy9iYXJyeS1vcmRlci1idXNpbmVzcy1jb3JlIC1hbSAtRHNraXBUZXN0cyBjb21waWxlYCDihpIgQlVJTEQgU1VDQ0VTU+OAglxuLSBgZ3JlcCBcImV4dGVuZHMgQWJzVXNlck9yZGVyU2VydmljZVwiYCDnoa7orqTlrZDnsbvlj6rmnIkgYFVzZXJPcmRlclNlcnZpY2VJbXBsOjMyYOOAgWBVc2VyQmF0Y2hPcmRlclNlcnZpY2VJbXBsOjIwYO+8m2BncmVwIFwiZmV0Y2hVc2VyT3JkZXJcImAg56Gu6K6k6LCD55So5pa55Y+q5pyJIGBUYXNrQ29udHJvbGxlcjoxNTBgIC8gYE9yZGVyQ29udHJvbGxlcjo2MWAgLyBgQmF0Y2hUYXNrQ29udHJvbGxlcjoxNTZgIC8gYEZ1bGxUYXNrQ29udHJvbGxlcjo2MGDvvIzlhajpg6jnu4/ov5nkuKTkuKrlrp7njrDvvIzljZXmnaHkuI7mibnph4/lj5bljZXpg73ooqvopobnm5bjgIJcbi0g5pyq6LeR6L+Q6KGM5pyfIFJlZGlzIOmqjOivge+8iOmcgOi/nuecn+WuniBSZWRpcyDkuI4gYXBwIOerr+ivt+axgu+8ie+8jOeVmee7mea1i+ivlemYtuauteOAglxuXG4jIyDlr7nnhafpqozmlLbmoIflh4ZcblxufCDpqozmlLbmnaEgfCDnirbmgIEgfFxufC0tLXwtLS18XG58IOaMgee7reWPluWNleS9huWni+e7iOaXoOS7u+WKoeaXtiBgWlNDT1JFIGJhcnJ5X29ubGluZV91aWRfe3VzZXJJZH0ge3VpZH1gIOWtmOWcqOW5tuWIt+aWsCB8IOS7o+eggeW3sua7oei2s++8iGBmaW5hbGx5YCDopobnm5YgbWlzcyDliIbmlK/vvIxaQUREIOimhuebliBzY29yZe+8ie+8jOW+hei/kOihjOacn+mqjOivgSB8XG58IOWJjee9ruagoemqjOaLpuaIquWQjOagt+WGmeWFpSB8IOW3sua7oei2s++8mmBidWlsZFByZUNoZWNrRXJyb3JgIOeahCBgcmV0dXJuYCDpg73lnKggYHRyeWAg5YaF77yMYGZpbmFsbHlgIOW/heaJp+ihjCB8XG58IGBaU0NPUkUgYmFycnlfb25saW5lX3VzZXIge3VzZXJJZH1gIOWIt+aWsOS4lCBgVFRMIGJhcnJ5X29ubGluZV91aWRfe3VzZXJJZH1gIOS4uuatoyB8IOS7o+eggeW3sua7oei2s++8jOW+hei/kOihjOacn+mqjOivgSB8XG58IFJlZGlzIOW8guW4uOaXtuWPluWNleihjOS4uuS4jeWPmO+8jOS7hSB3YXJuIHwg5bey5ruh6Laz77yI5pa55rOV57qnIHRyeS1jYXRjaO+8iSB8XG58IOWNleadoeS4juaJuemHj+WPluWNleWdh+eUn+aViCB8IOW3sua7oei2s++8iOS4pOS4quWtkOexu+WFseeUqOaKveixoeexu+WFpeWPo++8iSB8XG58IOS4jeWBmumhue+8iOaXoOW8gOWFs+OAgeS4jeaUuSBgT3JkZXJGZXRjaE1vbml0b3JDYWNoZWDjgIHkuI3lhpnmn6Xor6Lnu5/orqHjgIHkuI3mlLkgQ29udHJvbGxlci9EVE/jgIHkuI3nu5nmj5DkuqQv5L+d5rS75Z+L54K577yJIHwg5Z2H5pyq6Kem56KwIHxcblxuIyMg5rWL6K+V5Lqk5o6l5L+h5oGvXG5cbi0g5YWl5Y+j77yaYC90YXNrL2dldGDvvIhUYXNrQ29udHJvbGxlcu+8ieOAgWAvb3JkZXIvKmDvvIhPcmRlckNvbnRyb2xsZXLvvInjgIHmibnph48gYEJhdGNoVGFza0NvbnRyb2xsZXJg44CBYEZ1bGxUYXNrQ29udHJvbGxlcmDvvIjotbAgYFVzZXJCYXRjaE9yZGVyU2VydmljZWDvvInjgIJcbi0g546v5aKD77yaYmFycnkgYXBwLWNsaWVudCDmnI3liqEgKyDlhbbphY3nva7nmoQgUmVkaXPvvIzotKblj7fpnIDluKblkIjms5UgdUlE77yb5p6E6YCg44CM5peg5Lu75Yqh44CN5Zy65pmv5Y+q6ZyA6K+l55So5oi35Liq5Lq65rGg5Li656m644CCXG4tIOinguWvn++8mmBaU0NPUkUgYmFycnlfb25saW5lX3VpZF97dXNlcklkfSB7dWlkfWDjgIFgVFRMIGJhcnJ5X29ubGluZV91aWRfe3VzZXJJZH1g44CBYFpTQ09SRSBiYXJyeV9vbmxpbmVfdXNlciB7dXNlcklkfWDvvJtzY29yZSDkuLoqKuenkue6pyoqIFVuaXgg5pe26Ze05oiz44CCXG4tIOWJjee9ruagoemqjOaLpuaIquWcuuaZr+WPr+eUqOOAjOa4oOmBk+acqumFjee9ruOAjeaIluOAjOi2heS4iumZkOOAjeinpuWPkeOAglxuLSDmuIXnkIbvvJpgREVMIGJhcnJ5X29ubGluZV91aWRfe3VzZXJJZH1g77ybYGJhcnJ5X29ubGluZV91c2VyYCDljZXmnaHnlKggYFpSRU0gYmFycnlfb25saW5lX3VzZXIge3VzZXJJZH1g44CCXG4tIOW8guW4uOa8lOe7g++8muWBnOaOiSBSZWRpcyDmiJbmjIflkJHkuI3lj6/nlKjlnLDlnYDvvIzlj5bljZXlupTmraPluLjov5Tlm57kuJrliqHnu5PmnpzvvIzml6Xlv5flh7rnjrAgYHJlY29yZCB1c2VyIG9ubGluZSBoZWFydGJlYXQgZmFpbGVkYOOAglxuXG4jIyDpgZfnlZnkuI7po47pmalcblxuLSBzY29yZSDljZXkvY3lrprkuLoqKuenkioq77yM5piv5LiO5Lu75YqhIDLvvIjnu5/orqHkvqfvvInnmoTnoazlpZHnuqbvvJvoi6Xnu5/orqHkvqfmjInmr6vnp5Lop6Por7vkvJrlr7zoh7TlnKjnur/mlbDmgZLkuLogMOOAglxuLSDmnKrmj5DkuqQgZ2l077yI5pS55Yqo55WZ5Zyo5bel5L2c5Yy6IGBmZWF0dXJlL2lzc3VlX3JlcS0xNzg4NDIxMzk4NjE2YCDliIbmlK/nmoQgYmFycnkg5a2Q5qih5Z2X5YaF77yM5pyqIHB1c2jvvInjgIJcbi0g5YaZ6Lev5b6E5q+P5qyh5Y+W5Y2V5aKe5YqgIDIg5qyhIFpBREQgKyAxIOasoSBUVEwg6K+777yI5LuFIGB0dGwgPCAwYCDml7bmiY3lpJrkuIDmrKEgRVhQSVJF77yJ77yM5LiO5pei5pyJ5Y+W5Y2V55uR5o6n5ZCM6YeP57qn44CCXG4tIOS7k+W6k+mHjOWPpuacieS4gOWllyBgQmF0Y2hUYXNrQ29udHJvbGxlci5yZWNvcmRVc2VyVWlkVXNhZ2Vg77yIYHVzZXI6dWlkOnpzZXQ6KmDvvIzmr6vnp5Igc2NvcmXvvIwyIOWwj+aXtiBUVEzvvInnmoTni6znq4vmnLrliLbvvIzmnKzmrKHmnKrlpI3nlKjkuZ/mnKrmlLnliqjvvIzmjpLmn6Xml7bms6jmhI/ljLrliIbjgIJcblxuIyMg5Luj56CB5LqL5a6e5Lqk5o6lXG5cbjEuIOaWsOexu++8mmBiYXJyeS9iYXJyeS1idXNpbmVzcy9iYXJyeS1vcmRlci1idXNpbmVzcy9iYXJyeS1vcmRlci1idXNpbmVzcy1jb3JlL3NyYy9tYWluL2phdmEvY29tL2JhcnJ5L2J1c2luZXNzL29yZGVyL3N1cHBvcnQvVXNlck9ubGluZUhlYXJ0YmVhdENhY2hlLmphdmFg77yMYEBDb21wb25lbnRg77yM5ZSv5LiA5YWs5byA5pa55rOVIGBwdWJsaWMgdm9pZCByZWNvcmQoTG9uZyB1c2VySWQsIFN0cmluZyB1aWQpYOOAglxuMi4gUmVkaXMga2V5IOWlkee6pu+8mmBiYXJyeV9vbmxpbmVfdWlkX3t1c2VySWR9YO+8iFpTRVTvvIxtZW1iZXIgPSB1aWTvvInjgIFgYmFycnlfb25saW5lX3VzZXJg77yIWlNFVO+8jG1lbWJlciA9IHVzZXJJZCDnmoTlrZfnrKbkuLLlvaLlvI/vvInjgIJcbjMuICoqc2NvcmUg5Y2V5L2NID0g56eS57qnIFVuaXgg5pe26Ze05oizKirvvIhgU3lzdGVtLmN1cnJlbnRUaW1lTWlsbGlzKCkgLyAxMDAwTGDvvInvvJvnu5/orqHkvqfnqpflj6PmiKrmraLlgLznm7TmjqXnlKggYG5vd+enkiAtIHdpbmRvd1NlY29uZHNg77yM5LiN6KaB5LmYIDEwMDDjgIJcbjQuIGBiYXJyeV9vbmxpbmVfdWlkX3t1c2VySWR9YCDnmoQgVFRMIOWFnOW6leeUseWGmeWFpeS+p+i0n+i0o++8mmB0dGwgPCAwYCDml7YgYEVYUElSRSAzNjAwYO+8jOW4uOmHjyBgT05MSU5FX1VJRF9FWFBJUkVfU0VDT05EUyA9IDM2MDBg44CCXG41LiBgYmFycnlfb25saW5lX3VzZXJgICoq5LiN6K6+IFRUTCoq77yM6aG755Sx5p+l6K+i5L6nIGBaUkVNUkFOR0VCWVNDT1JFIGJhcnJ5X29ubGluZV91c2VyIDAgKG5vdyAtIHdpbmRvd1NlY29uZHMpYCDmuIXnkIbvvJvmuIXnqbrlkI4gUmVkaXMg6Ieq5Yqo5YigIGtleeOAglxuNi4g5Z+L54K55L2N572u77yaYEFic1VzZXJPcmRlclNlcnZpY2UuZmV0Y2hVc2VyT3JkZXJgIOeahCBgZmluYWxseWAg6aaW6KGM77yIYEFic1VzZXJPcmRlclNlcnZpY2UuamF2YToxNDktMTUwYO+8ie+8jOWcqCBgbW9uaXRvckZldGNoSGl0L21vbml0b3JGZXRjaE1pc3NgIOS5i+WJjeOAglxuNy4gYEFic1VzZXJPcmRlclNlcnZpY2UuamF2YTo1MC01MWAg5paw5aKe5a2X5q61IGBAQXV0b3dpcmVkIHByaXZhdGUgVXNlck9ubGluZUhlYXJ0YmVhdENhY2hlIHVzZXJPbmxpbmVIZWFydGJlYXRDYWNoZTtg44CCXG44LiBgZmV0Y2hVc2VyT3JkZXJgIOeahOaJgOacieWJjee9ruagoemqjOaLpuaIqumDveaYryBgdHJ5YCDlhoUgYHJldHVybiBidWlsZFByZUNoZWNrRXJyb3IoLi4uKWDvvIxgZmluYWxseWAg5b+F5omn6KGM4oCU4oCU57uf6K6h5Y+j5b6E5YyF5ZCr6KKr5oum5oiq55qEIHVJROOAglxuOS4gYHVpZGAg56m655m95oiWIGB1c2VySWRgIOS4uiBudWxsIOaXtuS4jeWGmeW/g+i3s++8jGBiYXJyeV9vbmxpbmVfdWlkXypgIOmHjOS4jeS8muWHuueOsOepuiBtZW1iZXLjgIJcbjEwLiDlv4Pot7PlhpnlhaXml6DlvIDlhbPvvIzml6DphY3nva7pobnvvJvkuI3or7vku7vkvZUgYEBWYWx1ZWDjgIJcbjExLiBgUmVkaXNTZXJ2aWNlYO+8iGBiYXJyeS1wbHVnaW4vYmFycnktcmVkaXMvYmFycnktamVkaXMvLi4uL3V0aWwvUmVkaXNTZXJ2aWNlLmphdmFg77yJ546w5pyJ6IO95Yqb77yaYHphZGQoU3RyaW5nLGxvbmcsU3RyaW5nKWA6ODnjgIFgelJhbmdlQnlTY29yZWA6MTExNe+8iOW8uuWItuS8oCBvZmZzZXQvY291bnTvvInjgIFgZ2V0WkNhcmRgOjEyMDTjgIFgZXZhbGA6MTMwNeOAgWBleHBpcmUoU3RyaW5nLGludClgOjI3OeOAgWB0dGwoU3RyaW5nKWA6Mjg577ybKirku43nvLogYHpjb3VudGDjgIFgenJlbXJhbmdlQnlTY29yZWDjgIHml6Agb2Zmc2V0L2NvdW50IOeahCBgelJhbmdlQnlTY29yZWAg6YeN6L29KirvvIzku7vliqEgMiDpnIDoh6rooYzooaXpvZDjgIJcbjEyLiDlj5bljZXlhaXlj6PlrZDnsbvlj6rmnInkuKTkuKrvvJpgb3JkZXIvaW1wbC9Vc2VyT3JkZXJTZXJ2aWNlSW1wbC5qYXZhOjMyYOOAgWBvcmRlci9pbXBsL1VzZXJCYXRjaE9yZGVyU2VydmljZUltcGwuamF2YToyMGDjgIJcbjEzLiDlj5bljZXosIPnlKjmlrnlm5vlpITvvJpgVGFza0NvbnRyb2xsZXI6MTUwYOOAgWBPcmRlckNvbnRyb2xsZXI6NjFg44CBYEJhdGNoVGFza0NvbnRyb2xsZXI6MTU2YOOAgWBGdWxsVGFza0NvbnRyb2xsZXI6NjBg77yI5ZCO6ICF6LWwIGBVc2VyQmF0Y2hPcmRlclNlcnZpY2Vg77yJ44CCXG4xNC4gYE9yZGVyRmV0Y2hNb25pdG9yQ2FjaGVgIOacquaUueWKqO+8jOWFtiBgYmFycnlfb3JkZXJfZmV0Y2hfe2hpdCxtaXNzfV97dXNlcix1aWR9XypgIOiuoeaVsCBrZXkg5LiO5b+D6LezIGtleSDnm7jkupLni6znq4vjgIJcbjE1LiDml6DlhbPnmoTml6LmnInmnLrliLbvvJpgQmF0Y2hUYXNrQ29udHJvbGxlci5yZWNvcmRVc2VyVWlkVXNhZ2Vg77yI57qmIDQ0Ny00OTAg6KGM77yJ5YaZIGB1c2VyOnVpZDp6c2V0Ont1c2VySWR9YCDkuI4gYGFjdGl2ZTp1c2Vyczp6c2V0OnVpZDp1c2FnZWDvvIzmr6vnp5Igc2NvcmXvvIzkuI7mnKzmrKEga2V5IOaXoOWFs+OAglxuXG7mibnph4/liKTlrprvvJrlrozmiJAiLCJzdGF0dXMiOiJjb21wbGV0ZWQiLCJwaGFzZSI6ImZpbmFsX2Fuc3dlciJ9XX1dfQ==
+-->
