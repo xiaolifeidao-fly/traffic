@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>积分配置原型</title>
+<style>
+  :root {
+    --bg: #f0f2f5; --panel: #ffffff; --text: #1f1f1f; --muted: #8c8c8c; --border: #e5e7eb;
+    --primary: #1677ff; --primary-bg: #e6f4ff; --danger: #ff4d4f; --warn: #d48806;
+    --new: #722ed1; --new-bg: #f9f0ff; --green: #389e0d; --green-bg: #f6ffed; --row: #fafafa;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5715 -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif; padding: 24px 16px; }
+  .modal { max-width: 960px; margin: 0 auto 32px; background: var(--panel); border-radius: 8px; box-shadow: 0 6px 16px rgba(0,0,0,.08), 0 3px 6px -4px rgba(0,0,0,.12); padding: 20px 24px 24px; }
+  .modal-title { font-size: 16px; font-weight: 600; margin-bottom: 16px; display: flex; justify-content: space-between; }
+  .close { color: var(--muted); }
+  h3 { font-size: 14px; font-weight: 600; margin: 0 0 8px; }
+  .hint { color: var(--muted); margin-bottom: 12px; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
+  .section { margin-bottom: 24px; }
+  .input, .select { height: 32px; border: 1px solid #d9d9d9; border-radius: 6px; padding: 4px 11px; background: #fff; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+  .select::after { content: "⌄"; color: var(--muted); margin-left: auto; padding-left: 8px; }
+  .addon { display: inline-flex; height: 32px; border: 1px solid #d9d9d9; border-radius: 6px; overflow: hidden; }
+  .addon span { padding: 4px 11px; display: inline-flex; align-items: center; }
+  .addon .a { background: #fafafa; color: #595959; border-right: 1px solid #d9d9d9; }
+  .addon .a.r { border-right: 0; border-left: 1px solid #d9d9d9; }
+  .btn { height: 32px; padding: 4px 15px; border-radius: 6px; border: 1px solid #d9d9d9; background: #fff; display: inline-flex; align-items: center; gap: 6px; }
+  .btn.primary { background: var(--primary); border-color: var(--primary); color: #fff; }
+  .btn.icon { width: 32px; padding: 0; justify-content: center; }
+  .btn.link { border: 0; color: var(--primary); padding: 0 4px; height: auto; background: none; }
+  .btn.danger { color: var(--danger); border: 0; background: none; }
+  .tag { display: inline-flex; align-items: center; height: 24px; padding: 0 8px; border-radius: 4px; border: 1px solid; font-size: 12px; }
+  .tag.blue { color: var(--primary); background: var(--primary-bg); border-color: #91caff; }
+  .tag.green { color: var(--green); background: var(--green-bg); border-color: #b7eb8f; }
+  .tag.gray { color: #595959; background: #fafafa; border-color: #d9d9d9; }
+  .card { border: 1px solid var(--border); border-radius: 8px; margin-bottom: 12px; }
+  .card-head { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--border); gap: 8px; flex-wrap: wrap; }
+  .card-body { padding: 8px 12px 12px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; background: var(--row); font-weight: 600; padding: 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  td { padding: 8px; border-bottom: 1px solid #f0f0f0; white-space: nowrap; }
+  .cb { width: 16px; height: 16px; border: 1px solid #d9d9d9; border-radius: 4px; display: inline-block; vertical-align: middle; }
+  .cb.on { background: var(--primary); border-color: var(--primary); position: relative; }
+  .cb.on::after { content: ""; position: absolute; left: 5px; top: 1px; width: 4px; height: 9px; border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg); }
+  .muted { color: var(--muted); }
+  .warn { color: var(--warn); }
+  .new { outline: 2px dashed var(--new); outline-offset: 3px; border-radius: 6px; }
+  .newbadge { display: inline-block; font-size: 11px; color: var(--new); background: var(--new-bg); border: 1px solid #d3adf7; border-radius: 4px; padding: 0 6px; margin-left: 6px; font-weight: 500; vertical-align: middle; }
+  .legend { max-width: 960px; margin: 0 auto 16px; display: flex; gap: 16px; flex-wrap: wrap; color: #595959; font-size: 13px; }
+  .table-wrap { overflow-x: auto; }
+  .pager { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; color: #595959; }
+  .pager span { min-width: 28px; height: 28px; border: 1px solid #d9d9d9; border-radius: 6px; display: inline-flex; align-items: center; justify-content: center; padding: 0 6px; }
+  .pager .on { border-color: var(--primary); color: var(--primary); }
+  .sub-modal { max-width: 520px; }
+  .field { margin-bottom: 16px; }
+  .field label { display: block; margin-bottom: 6px; }
+  .footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+  .page-cap { max-width: 960px; margin: 0 auto 8px; font-weight: 600; color: #434343; }
+</style>
+</head>
+<body>
+
+<div class="legend">
+  <span>示例商品：人工点赞，原价 47 积分</span>
+  <span><span class="newbadge" style="margin:0">待实现</span> 紫色虚线框 = 「领任务概率」方案，尚未开发</span>
+  <span>其余 = 已实现（价格策略组）</span>
+</div>
+
+<div class="page-cap">① 积分配置弹窗</div>
+<div class="modal">
+  <div class="modal-title"><span>积分配置：人工点赞</span><span class="close">✕</span></div>
+
+  <div class="section">
+    <h3>全局配置</h3>
+    <div class="hint">审核加积分方式：按提交量 = 审核成功和失败都加积分；按审核 = 只有审核成功才加积分。<br>吃量比例：提交任务时按比例吃量，填 0 表示不吃量，留空按系统默认比例。两项可分别保存。</div>
+    <div class="row">
+      <span class="select" style="width:140px">按审核</span>
+      <span class="addon"><span>10</span><span class="a r">%</span></span>
+      <span class="btn primary">💾 保存</span>
+    </div>
+  </div>
+
+  <div class="section">
+    <h3>价格策略</h3>
+    <div class="hint">领任务时按用户绑定的策略组随机积分：没绑组走默认组，没有默认组用原价。原价跟随商品积分，改商品积分不用改这里。<br>删除策略组后，绑定它的用户自动改走默认组。</div>
+    <div class="row">
+      <span class="tag blue">原价 47</span>
+      <span class="addon"><span class="a">档位1</span><span>55</span></span><span class="btn icon">🗑</span>
+      <span class="addon"><span class="a">档位2</span><span>62</span></span><span class="btn icon">🗑</span>
+      <span class="btn">＋ 添加档位</span>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <span class="input" style="width:200px">标准</span>
+        <span class="row" style="margin:0">
+          <span class="addon new"><span class="a">领任务概率</span><span>100</span><span class="a r">%</span></span><span class="newbadge">待实现</span>
+          <span><span class="cb on"></span> 默认组</span>
+          <span class="btn danger">🗑</span>
+        </span>
+      </div>
+      <div class="card-body table-wrap">
+        <table>
+          <tr><th>档位</th><th>积分</th><th>选用</th><th>权重</th><th>概率</th></tr>
+          <tr><td>原价</td><td>47</td><td><span class="cb on"></span></td><td><span class="input" style="height:24px;width:110px">1.0000</span></td><td>25.0%</td></tr>
+          <tr><td>档位1</td><td>55</td><td><span class="cb on"></span></td><td><span class="input" style="height:24px;width:110px">3.0000</span></td><td>75.0%</td></tr>
+          <tr><td>档位2</td><td>62</td><td><span class="cb"></span></td><td><span class="input muted" style="height:24px;width:110px;background:#f5f5f5">&nbsp;</span></td><td>-</td></tr>
+        </table>
+        <div class="muted" style="margin-top:8px">期望积分：53.00</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <span class="input" style="width:200px">原价组</span>
+        <span class="row" style="margin:0">
+          <span class="addon new"><span class="a">领任务概率</span><span>90</span><span class="a r">%</span></span><span class="newbadge">待实现</span>
+          <span><span class="cb"></span> 默认组</span>
+          <span class="btn danger">🗑</span>
+        </span>
+      </div>
+      <div class="card-body table-wrap">
+        <table>
+          <tr><th>档位</th><th>积分</th><th>选用</th><th>权重</th><th>概率</th></tr>
+          <tr><td>原价</td><td>47</td><td><span class="cb on"></span></td><td><span class="input" style="height:24px;width:110px">1.0000</span></td><td>100.0%</td></tr>
+          <tr><td>档位1</td><td>55</td><td><span class="cb"></span></td><td><span class="input muted" style="height:24px;width:110px;background:#f5f5f5">&nbsp;</span></td><td>-</td></tr>
+          <tr><td>档位2</td><td>62</td><td><span class="cb"></span></td><td><span class="input muted" style="height:24px;width:110px;background:#f5f5f5">&nbsp;</span></td><td>-</td></tr>
+        </table>
+        <div class="muted" style="margin-top:8px">期望积分：47.00</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <span class="input" style="width:200px">高价组</span>
+        <span class="row" style="margin:0">
+          <span class="addon new"><span class="a">领任务概率</span><span>100</span><span class="a r">%</span></span><span class="newbadge">待实现</span>
+          <span><span class="cb"></span> 默认组</span>
+          <span class="btn danger">🗑</span>
+        </span>
+      </div>
+      <div class="card-body table-wrap">
+        <table>
+          <tr><th>档位</th><th>积分</th><th>选用</th><th>权重</th><th>概率</th></tr>
+          <tr><td>原价</td><td>47</td><td><span class="cb"></span></td><td><span class="input muted" style="height:24px;width:110px;background:#f5f5f5">&nbsp;</span></td><td>-</td></tr>
+          <tr><td>档位1</td><td>55</td><td><span class="cb on"></span></td><td><span class="input" style="height:24px;width:110px">1.0000</span></td><td>50.0%</td></tr>
+          <tr><td>档位2</td><td>62</td><td><span class="cb on"></span></td><td><span class="input" style="height:24px;width:110px">1.0000</span></td><td>50.0%</td></tr>
+        </table>
+        <div class="muted" style="margin-top:8px">期望积分：58.50</div>
+      </div>
+    </div>
+
+    <div class="row" style="margin-top:12px">
+      <span class="btn">＋ 添加策略组</span>
+      <span class="btn primary">💾 保存价格策略</span>
+    </div>
+  </div>
+
+  <div class="section" style="margin-bottom:0">
+    <h3>按用户配置</h3>
+    <div class="hint">列表为本商品加过白名单的用户（含已剔除）。加积分方式、吃量比例各自留空即取全局值；价格策略组留空走默认组。</div>
+    <div class="row">
+      <span class="input" style="width:220px;color:#bfbfbf">按用户名搜索　　　　　🔍</span>
+      <span class="select" style="width:110px">全部</span>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <tr><th>用户ID</th><th>用户名</th><th>渠道</th><th>白名单状态</th><th>加积分方式</th><th>吃量比例</th><th>价格策略组</th><th class="new">领任务概率<span class="newbadge">待实现</span></th><th>操作</th></tr>
+        <tr><td>10023</td><td>zhangsan</td><td>MANAGER</td><td><span class="tag green">生效</span></td><td class="muted">全局</td><td class="muted">全局</td><td class="muted">默认组：标准</td><td class="muted">组：100%</td><td><span class="btn link">编辑</span></td></tr>
+        <tr><td>10057</td><td>lisi</td><td>MANAGER</td><td><span class="tag green">生效</span></td><td>按提交量</td><td class="muted">全局</td><td>原价组</td><td class="muted">组：90%</td><td><span class="btn link">编辑</span></td></tr>
+        <tr><td>10088</td><td>wangwu</td><td>ZM</td><td><span class="tag green">生效</span></td><td class="muted">全局</td><td>5%</td><td>原价组</td><td>80%</td><td><span class="btn link">编辑</span></td></tr>
+        <tr><td>10102</td><td>zhaoliu</td><td>MANAGER</td><td><span class="tag green">生效</span></td><td class="muted">全局</td><td class="muted">全局</td><td>高价组</td><td class="muted">组：100%</td><td><span class="btn link">编辑</span></td></tr>
+        <tr><td>10131</td><td>sunqi</td><td>MANAGER</td><td><span class="tag gray">已剔除</span></td><td class="muted">全局</td><td class="muted">全局</td><td class="warn">组已删除，走默认</td><td class="muted">组：100%</td><td><span class="btn link">编辑</span></td></tr>
+      </table>
+    </div>
+    <div class="pager"><span>‹</span><span class="on">1</span><span>›</span><span>10 条/页</span></div>
+  </div>
+</div>
+
+<div class="page-cap">② 用户积分配置（点「编辑」弹出）</div>
+<div class="modal sub-modal">
+  <div class="modal-title"><span>用户积分配置：wangwu</span><span class="close">✕</span></div>
+  <div class="hint">每项留空则使用全局配置（当前全局：按审核 · 吃量 10%）。</div>
+  <div class="row">
+    <span class="select" style="width:160px;color:#bfbfbf">全局：按审核</span>
+    <span class="addon"><span>5</span><span class="a r">%</span></span>
+  </div>
+  <div class="field">
+    <label>价格策略组</label>
+    <span class="select" style="width:100%">原价组：47（100.0%）</span>
+  </div>
+  <div class="field new" style="padding:4px">
+    <label>领任务概率 <span class="newbadge">待实现</span></label>
+    <span class="addon"><span style="width:120px">80</span><span class="a r">%</span></span>
+    <div class="muted" style="margin-top:6px;font-size:12px">留空跟随所绑策略组（原价组：90%）。每次领任务、每个商品抽一次，没抽中就跳过该商品。</div>
+  </div>
+  <div class="footer"><span class="btn">取消</span><span class="btn primary">保存</span></div>
+</div>
+
+</body>
+</html>
